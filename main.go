@@ -2,13 +2,27 @@ package main
 
 import (
 	"bytes"
-	"io"
 	"net/http"
-
 	"github.com/gin-gonic/gin"
+	"io"
 )
 
-// Reenviar la solicitud PUT con parámetros dinámicos
+func forwardRequest(c *gin.Context, serviceURL string) {
+	var jsonData map[string]interface{}
+	if err := c.ShouldBindJSON(&jsonData); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON"})
+		return
+	}
+
+	resp, err := http.Post(serviceURL, "application/json", c.Request.Body)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to forward request"})
+		return
+	}
+	defer resp.Body.Close()
+
+	c.JSON(resp.StatusCode, gin.H{"message": "Request forwarded"})
+}
 func forwardPutRequest(c *gin.Context, serviceURL string) {
 	// Obtener el ID dinámico de la URL
 	id := c.Param("id")
@@ -51,13 +65,40 @@ func forwardPutRequest(c *gin.Context, serviceURL string) {
 	c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), respBody)
 }
 
+
+
 func main() {
 	r := gin.Default()
 
-	// Ruta para reenviar solicitudes PUT con parámetros dinámicos
+	r.POST("/create", func(c *gin.Context) {
+		forwardRequest(c, "http://localhost:8081/create")
+	})
+
 	r.PUT("/edit/:id", func(c *gin.Context) {
 		forwardPutRequest(c, "http://localhost:8082/edit")
 	})
 
-	r.Run(":9090") // Ejecutar el servidor en el puerto 9090
+	r.GET("/patient/:id", func(c *gin.Context) {
+		patientID := c.Param("id")
+		serviceURL := "http://localhost:8083/patient/" + patientID
+	
+		resp, err := http.Get(serviceURL)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve data"})
+			return
+		}
+		defer resp.Body.Close()
+	
+		// Leer el cuerpo de la respuesta
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read response"})
+			return
+		}
+	
+		c.Data(resp.StatusCode, "application/json", body)
+	})
+	
+
+	r.Run(":9090") 
 }
