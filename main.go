@@ -7,35 +7,51 @@ import (
 	"io"
 )
 
+// Forward POST requests
 func forwardRequest(c *gin.Context, serviceURL string) {
-	var jsonData map[string]interface{}
-	if err := c.ShouldBindJSON(&jsonData); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON"})
+	// Leer el cuerpo de la solicitud y almacenarlo en un buffer
+	body, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read request body"})
 		return
 	}
+	// Restaurar el cuerpo para permitir múltiples lecturas
+	c.Request.Body = io.NopCloser(bytes.NewBuffer(body))
 
-	resp, err := http.Post(serviceURL, "application/json", c.Request.Body)
+	// Reenviar la solicitud al servicio
+	resp, err := http.Post(serviceURL, "application/json", bytes.NewReader(body))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to forward request"})
 		return
 	}
 	defer resp.Body.Close()
 
-	c.JSON(resp.StatusCode, gin.H{"message": "Request forwarded"})
+	// Leer el cuerpo de la respuesta
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read response"})
+		return
+	}
+
+	c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), respBody)
 }
+
+// Forward PUT requests
 func forwardPutRequest(c *gin.Context, serviceURL string) {
-	// Obtener el ID dinámico de la URL
+	// Obtener el ID de la ruta
 	id := c.Param("id")
 	serviceURL = serviceURL + "/" + id
 
-	// Leer el cuerpo de la solicitud entrante
+	// Leer el cuerpo de la solicitud y almacenarlo en un buffer
 	body, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read request body"})
 		return
 	}
+	// Restaurar el cuerpo para permitir múltiples lecturas
+	c.Request.Body = io.NopCloser(bytes.NewBuffer(body))
 
-	// Crear una nueva solicitud PUT para reenviar
+	// Crear la solicitud PUT
 	req, err := http.NewRequest(http.MethodPut, serviceURL, bytes.NewReader(body))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create request"})
@@ -45,7 +61,7 @@ func forwardPutRequest(c *gin.Context, serviceURL string) {
 	// Copiar los encabezados originales
 	req.Header = c.Request.Header
 
-	// Hacer la solicitud al servicio remoto
+	// Enviar la solicitud
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -54,22 +70,20 @@ func forwardPutRequest(c *gin.Context, serviceURL string) {
 	}
 	defer resp.Body.Close()
 
-	// Leer la respuesta del servicio remoto
+	// Leer el cuerpo de la respuesta
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read response"})
 		return
 	}
 
-	// Responder con el código de estado y el cuerpo del servicio remoto
 	c.Data(resp.StatusCode, resp.Header.Get("Content-Type"), respBody)
 }
-
-
 
 func main() {
 	r := gin.Default()
 
+	// Rutas y handlers
 	r.POST("/create", func(c *gin.Context) {
 		forwardRequest(c, "http://localhost:8081/create")
 	})
@@ -81,24 +95,24 @@ func main() {
 	r.GET("/patient/:id", func(c *gin.Context) {
 		patientID := c.Param("id")
 		serviceURL := "http://localhost:8083/patient/" + patientID
-	
+
 		resp, err := http.Get(serviceURL)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve data"})
 			return
 		}
 		defer resp.Body.Close()
-	
+
 		// Leer el cuerpo de la respuesta
 		body, err := io.ReadAll(resp.Body)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read response"})
 			return
 		}
-	
+
 		c.Data(resp.StatusCode, "application/json", body)
 	})
-	
 
-	r.Run(":9090") 
+	// Ejecutar el servidor en el puerto 9090
+	r.Run(":9090")
 }
